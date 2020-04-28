@@ -1,43 +1,128 @@
-'use strict'
+const dgraph = require("dgraph-js-http");
 
-const Store = require('electron-store')
+function setSchema(dgraphClient) {
+    const schema = `
+        title: string @index(exact) .
 
-class DataStore extends Store {
-  constructor (settings) {
-    super(settings)
+        type Todo {
+            title
+        }
+    `;
+    return dgraphClient.alter({ schema: schema });
 
-    // initialize with todos or empty array
-    this.todos = this.get('todos') || []
-  }
+}
 
-  saveTodos () {
-    // save todos to JSON file
-    this.set('todos', this.todos)
+function queryTodo(dgraphClient) {
+    const query = `query {
+        all(func: type(Todo)) {
+            uid
+            title
+        }
+    }`;
+    return dgraphClient.newTxn().query(query).then((res) => {
+        const todos = res.data;
+        // Print results.
+        console.log(`All todos: ${todos.all.length}`);
+        for (let i = 0; i < todos.all.length; i++) {
+            console.log(todos.all[i]);
+        }
+        return todos.all;
+    });
+}
 
-    // returning 'this' allows method chaining
-    return this
-  }
+function mutateTodo(dgraphClient, mutationJson) {
+    const txn = dgraphClient.newTxn();
+    let response;
+    let err;
+    return txn.mutate(mutationJson).then((res) => {
+        response = res;
 
-  getTodos () {
-    // set object's todos to todos in JSON file
-    this.todos = this.get('todos') || []
+        // Commit transaction.
+        return txn.commit();
+    }).then(() => {
+        console.log("All todo (map from blank node names to uids):");
+        console.log(response.data)
+        for (let key in response.data.uids) {
+            if (Object.hasOwnProperty(response.data.uids, key)) {
+                console.log(`${key}: ${response.data.uids[key]}`);
+            }
+        }
+        console.log();
+    }).catch((e) => {
+        err = e;
+        console.error(e);
+    }).then(() => {
+        return txn.discard();
+    }).then(() => {
+        if (err != null) {
+            throw err;
+        }
+    });
+}
 
-    return this
-  }
+class DataStore extends dgraph.DgraphClient {
+    constructor (settings) {
+        const clientStub = new dgraph.DgraphClientStub(
+            // addr: optional, default: "localhost:9080"
+            settings.url,
+        )
+        super(clientStub)
+        setSchema(this)
+        .then(() => {
+            console.log("\nSchema set!")
+        }).catch((e) => {
+            console.log("ERROR at setSchema: ", e)
+        })
 
-  addTodo (todo) {
-    // merge the existing todos with the new todo
-    this.todos = [ ...this.todos, todo ]
+        queryTodo(this)
+        .then((todos) => {
+            this.todos = todos
+        }).catch((e) => {
+            console.log("ERROR at queryTodo: ", e)
+        })
+    }
 
-    return this.saveTodos()
-  }
+    getTodo () {
+        return queryTodo(this).then((todos) => {
+            this.todos = todos
+            return this
+        }).catch((e) => {
+            console.log("ERROR getTodo: ", e)
+            return this
+        })
+    }
 
-  deleteTodo (todo) {
-    // filter out the target todo
-    this.todos = this.todos.filter(t => t !== todo)
+    addTodo(todo) {
+        console.log(todo)
+        const todoJson = {
+            title: todo,
+            "dgraph.type": "Todo",
+        }
+        return mutateTodo(this, {
+            setJson: todoJson
+        }).then(() => {
+            this.todos = [...this.todos, todoJson]
+            return this
+        }).catch((e) => {
+            console.log("ERROR addTodo: ", e)
+            return this
+        })
+    }
 
-    return this.saveTodos()
-  }
+    deleteTodo (todoID) {
+        return mutateTodo(this, {
+            deleteJson: {
+                uid: todoID,
+            }
+        }).then((res) => {
+            // filter out the target todo
+            this.todos = this.todos.filter(t => t.uid !== todoID)
+            return this
+        }).catch((e) => {
+            console.log("ERROR deleteTodo: ", e)
+            return this
+        })
+    }
 }
 
 module.exports = DataStore
