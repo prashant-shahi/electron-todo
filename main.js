@@ -9,7 +9,7 @@ const DataStore = require('./DataStore')
 require('electron-reload')(__dirname)
 
 // create a new todo store name "Todos Main"
-const todosData = new DataStore({ name: 'Todos Main' })
+const todosData = new DataStore({ url: 'http://localhost:8080' })
 
 function main () {
   // todo list window
@@ -23,8 +23,9 @@ function main () {
   // TODO: put these events into their own file
 
   // initialize with todos
-  mainWindow.once('show', () => {
-    mainWindow.webContents.send('todos', todosData.todos)
+  mainWindow.once('show', async () => {
+    const todos = await todosData.todos;
+    mainWindow.webContents.send('todos', todos)
   })
 
   // create add todo window
@@ -48,17 +49,19 @@ function main () {
   })
 
   // add-todo from add todo window
-  ipcMain.on('add-todo', (event, todo) => {
-    const updatedTodos = todosData.addTodo(todo).todos
+  ipcMain.on('add-todo', async (event, todo) => {
+    await todosData.addTodo(todo)
+    const updatedTodos = await todosData.getTodo()
 
-    mainWindow.send('todos', updatedTodos)
+    mainWindow.send('todos', updatedTodos.todos)
   })
 
   // delete-todo from todo list window
-  ipcMain.on('delete-todo', (event, todo) => {
-    const updatedTodos = todosData.deleteTodo(todo).todos
+  ipcMain.on('delete-todo', async (event, todo) => {
+    await todosData.deleteTodo(todo)
+    const updatedTodos = await todosData.getTodo()
 
-    mainWindow.send('todos', updatedTodos)
+    mainWindow.send('todos', updatedTodos.todos)
   })
 }
 
